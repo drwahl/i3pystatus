@@ -33,3 +33,8 @@ class Temperature(IntervalModule):
                 "full_text": self.format.format(temp=temp),
                 "color": self.color if temp < self.alert_temp else self.alert_color,
             }
+        else:
+            self.output = {
+                "full_text": '',
+                "color": self.color
+            }
