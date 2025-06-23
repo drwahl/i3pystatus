@@ -4,14 +4,32 @@ from i3pystatus import IntervalModule
 
 class Docker(IntervalModule):
     """
-    Display information about docker containers
+    Display information about docker containers.
+
+    Formatter accepts dict key's. e.g:
+
+    containers[key_value] : containers[running]
+
     Requires: docker
+
+    .. rubric:: Available formatters
+
+    * `{containers}` — dictionary of information related to containers in docker
+            `total` - total number of containers in docker e.g:
+            status - total number of containers currently in the specified status e.g: `containers[running]`
+    * `{volumes}` — dictionary of information related to volumes
+            `count` - total count of volumes
+            `volume_name` - specifies the volume_name to get information for e.g: `volumes[volume332]`
+    * `{images}` — dictionary of information related to docker images
+            `count` - total count of images in docker
     """
 
     settings = (
+        "format",
+        "color",
         ("interval", "Update interval (in seconds)"),
-        "format"
     )
+    color = None
     interval = 5
     format = "containers: {containers[running]} running/{containers[total]} total"
 
@@ -19,7 +37,9 @@ class Docker(IntervalModule):
         dclient = docker.from_env()
 
         docker_info = {
-                'containers': {},
+                'containers': {
+                    'running': 0
+                },
                 'volumes': {},
                 'images': {},
                 'networks': {}}
@@ -29,6 +49,7 @@ class Docker(IntervalModule):
             docker_info['containers'][container.status] = docker_info['containers'].get(container.status, 0) + 1
             docker_info['containers'][container.name] = container
             docker_info['containers'][container.name] = container.stats(stream=False)
+
             # Add some helper details
             docker_info['containers'][container.name]['memory_stats']['usage_kb'] = round(docker_info['containers'][container.name]['memory_stats'].get('usage', 0)/1024, 2)
             docker_info['containers'][container.name]['memory_stats']['usage_mb'] = round(docker_info['containers'][container.name]['memory_stats']['usage_kb']/1024, 2)
@@ -46,5 +67,5 @@ class Docker(IntervalModule):
 
         self.output = {
             "full_text": self.format.format(**docker_info),
-            #"color": color
+            "color": self.color
         }
