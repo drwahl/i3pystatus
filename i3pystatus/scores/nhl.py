@@ -9,9 +9,9 @@ import time
 from datetime import datetime
 from urllib.request import urlopen
 
-LIVE_URL = 'https://www.nhl.com/gamecenter/%s'
+LIVE_URL = 'https://www.nhl.com/gamecenter/{id}'
 SCOREBOARD_URL = 'https://www.nhl.com/scores'
-API_URL = 'https://statsapi.web.nhl.com/api/v1/schedule?startDate=%04d-%02d-%02d&endDate=%04d-%02d-%02d&expand=schedule.teams,schedule.linescore,schedule.broadcasts.all&site=en_nhl&teamId='
+API_URL = 'https://statsapi.web.nhl.com/api/v1/schedule?startDate={date:%Y-%m-%d}&endDate={date:%Y-%m-%d}&expand=schedule.teams,schedule.linescore,schedule.broadcasts.all&site=en_nhl&teamId='
 
 
 class NHL(ScoresBackend):
@@ -21,9 +21,8 @@ class NHL(ScoresBackend):
 
     .. rubric:: Available formatters
 
-    * `{home_name}` — Name of home team
-    * `{home_city}` — Name of home team's city
-    * `{home_abbrev}` — 3-letter abbreviation for home team's city
+    * `{home_team}` — Depending on the value of the ``team_format`` option,
+      will contain either the home team's name, abbreviation, or city
     * `{home_score}` — Home team's current score
     * `{home_wins}` — Home team's number of wins
     * `{home_losses}` — Home team's number of losses
@@ -33,9 +32,8 @@ class NHL(ScoresBackend):
       followed. Otherwise, this formatter will be blank.
     * `{home_empty_net}` — Shows the value from the ``empty_net`` parameter
       when the home team's net is empty.
-    * `{away_name}` — Name of away team
-    * `{away_city}` — Name of away team's city
-    * `{away_abbrev}` — 2 or 3-letter abbreviation for away team's city
+    * `{away_team}` — Depending on the value of the ``team_format`` option,
+      will contain either the away team's name, abbreviation, or city
     * `{away_score}` — Away team's current score
     * `{away_wins}` — Away team's number of wins
     * `{away_losses}` — Away team's number of losses
@@ -74,8 +72,7 @@ class NHL(ScoresBackend):
             backends=[
                 nhl.NHL(
                     favorite_teams=['CHI'],
-                    format_pregame = '[{scroll} ]NHL: [{away_favorite} ]{away_abbrev} ({away_wins}) at [{home_favorite} ]{home_abbrev} ({home_wins}) {start_time:%H:%M %Z}',
-                    format_final = '[{scroll} ]NHL: [{away_favorite} ]{away_abbrev} {away_score} ({away_wins}) at [{home_favorite} ]{home_abbrev} {home_score} ({home_wins}) (Final[/{overtime}])',
+                    format='[{scroll} ]NHL: [{away_favorite} ]{away_team} ({away_wins}) at [{home_favorite} ]{home_team} ({home_wins}) {game_status}'
                 ),
             ],
         )
@@ -105,6 +102,7 @@ class NHL(ScoresBackend):
     * **OTT** — Ottawa Senators
     * **PHI** — Philadelphia Flyers
     * **PIT** — Pittsburgh Penguins
+    * **SEA** — Seattle Kraken
     * **SJS** — San Jose Sharks
     * **STL** — St. Louis Blues
     * **TBL** — Tampa Bay Lightning
@@ -132,9 +130,15 @@ class NHL(ScoresBackend):
         ('format_no_games', 'Format used when no tracked games are scheduled '
                             'for the current day (does not support formatter '
                             'placeholders)'),
-        ('format_pregame', 'Format used when the game has not yet started'),
-        ('format_in_progress', 'Format used when the game is in progress'),
-        ('format_final', 'Format used when the game is complete'),
+        ('format', 'Format used to display game information'),
+        ('status_pregame', 'Format string used for the ``{game_status}`` '
+                           'formatter when the game has not started '),
+        ('status_in_progress', 'Format string used for the ``{game_status}`` '
+                               'formatter when the game is in progress'),
+        ('status_final', 'Format string used for the ``{game_status}`` '
+                         'formatter when the game has finished'),
+        ('status_postponed', 'Format string used for the ``{game_status}`` '
+                             'formatter when the game has been postponed'),
         ('empty_net', 'Value for the ``{away_empty_net}`` or '
                       '``{home_empty_net}`` formatter when the net is empty. '
                       'When the net is not empty, these formatters will be '
@@ -143,6 +147,9 @@ class NHL(ScoresBackend):
                         'codes. If overridden, the passed values will be '
                         'merged with the defaults, so it is not necessary to '
                         'define all teams if specifying this value.'),
+        ('team_format', 'One of ``name``, ``abbreviation``, or ``city``. If '
+                        'not specified, takes the value from the ``scores`` '
+                        'module.'),
         ('date', 'Date for which to display game scores, in **YYYY-MM-DD** '
                  'format. If unspecified, the current day\'s games will be '
                  'displayed starting at 10am Eastern time, with last '
@@ -184,6 +191,7 @@ class NHL(ScoresBackend):
         'OTT': '#C50B2F',
         'PHI': '#FF690B',
         'PIT': '#FFB81C',
+        'SEA': '#96D8D8',
         'SJS': '#007888',
         'STL': '#1764AD',
         'TBL': '#296AD5',
@@ -195,24 +203,28 @@ class NHL(ScoresBackend):
     }
 
     _valid_teams = [x for x in _default_colors]
-    _valid_display_order = ['in_progress', 'final', 'pregame']
+    _valid_display_order = ['in_progress', 'final', 'pregame', 'postponed']
 
     display_order = _valid_display_order
     format_no_games = 'NHL: No games'
-    format_pregame = '[{scroll} ]NHL: [{away_favorite} ]{away_abbrev} ({away_wins}-{away_losses}-{away_otl}) at [{home_favorite} ]{home_abbrev} ({home_wins}-{home_losses}-{home_otl}) {start_time:%H:%M %Z}'
-    format_in_progress = '[{scroll} ]NHL: [{away_favorite} ]{away_abbrev} {away_score}[ ({away_power_play})][ ({away_empty_net})], [{home_favorite} ]{home_abbrev} {home_score}[ ({home_power_play})][ ({home_empty_net})] ({time_remaining} {period})'
-    format_final = '[{scroll} ]NHL: [{away_favorite} ]{away_abbrev} {away_score} ({away_wins}-{away_losses}-{away_otl}) at [{home_favorite} ]{home_abbrev} {home_score} ({home_wins}-{home_losses}-{home_otl}) (Final[/{overtime}])'
+    format = '[{scroll} ]NHL: [{away_favorite} ]{away_team} [{away_score} ]({away_wins}-{away_losses}-{away_otl}) at [{home_favorite} ]{home_team} [{home_score} ]({home_wins}-{home_losses}-{home_otl}) {game_status}'
+    status_pregame = '{start_time:%H:%M %Z}'
+    status_in_progress = '({time_remaining} {period})'
+    status_final = '(Final[/{overtime}])'
+    status_postponed = 'PPD'
     empty_net = 'EN'
     team_colors = _default_colors
     live_url = LIVE_URL
     scoreboard_url = SCOREBOARD_URL
     api_url = API_URL
 
+    # These will inherit from the Scores class if not overridden
+    team_format = None
+
     @require(internet)
     def check_scores(self):
         self.get_api_date()
-        url = self.api_url % (self.date.year, self.date.month, self.date.day,
-                              self.date.year, self.date.month, self.date.day)
+        url = self.api_url.format(date=self.date)
 
         game_list = self.get_nested(self.api_request(url),
                                     'dates:0:games',
@@ -242,13 +254,12 @@ class NHL(ScoresBackend):
     def process_game(self, game):
         ret = {}
 
-        self.logger.debug('Processing %s game data: %s',
-                          self.__class__.__name__, game)
+        self.logger.debug(f'Processing {self.name} game data: {game}')
 
         linescore = self.get_nested(game, 'linescore', default={})
 
         ret['id'] = game['gamePk']
-        ret['live_url'] = self.live_url % ret['id']
+        ret['live_url'] = self.live_url.format(id=ret['id'])
         ret['period'] = self.get_nested(
             linescore,
             'currentPeriodOrdinal')
@@ -263,48 +274,57 @@ class NHL(ScoresBackend):
         pp_strength = self.get_nested(linescore, 'powerPlayStrength')
 
         for team in ('away', 'home'):
-            team_data = self.get_nested(game, 'teams:%s' % team, default={})
+            team_data = self.get_nested(game, f'teams:{team}', default={})
 
             if team == 'home':
                 ret['venue'] = self.get_nested(team_data, 'venue:name')
 
-            ret['%s_score' % team] = self.get_nested(
+            ret[f'{team}_score'] = self.get_nested(
                 team_data,
                 'score',
-                callback=self.force_int,
+                callback=self.zero_fallback,
                 default=0)
-            ret['%s_wins' % team] = self.get_nested(
-                team_data,
-                'leagueRecord:wins',
-                callback=self.force_int,
-                default=0)
-            ret['%s_losses' % team] = self.get_nested(
-                team_data,
-                'leagueRecord:losses',
-                callback=self.force_int,
-                default=0)
-            ret['%s_otl' % team] = self.get_nested(
-                team_data,
-                'leagueRecord:ot',
-                callback=self.force_int,
-                default=0)
+            ret[f'{team}_wins'] = int(
+                self.get_nested(
+                    team_data,
+                    'leagueRecord:wins',
+                    callback=self.zero_fallback,
+                    default=0,
+                )
+            )
+            ret[f'{team}_losses'] = int(
+                self.get_nested(
+                    team_data,
+                    'leagueRecord:losses',
+                    callback=self.zero_fallback,
+                    default=0,
+                )
+            )
+            ret[f'{team}_otl'] = int(
+                self.get_nested(
+                    team_data,
+                    'leagueRecord:ot',
+                    callback=self.zero_fallback,
+                    default=0,
+                )
+            )
 
-            ret['%s_city' % team] = self.get_nested(
+            ret[f'{team}_city'] = self.get_nested(
                 team_data,
                 'team:shortName')
-            ret['%s_name' % team] = self.get_nested(
+            ret[f'{team}_name'] = self.get_nested(
                 team_data,
                 'team:teamName')
-            ret['%s_abbrev' % team] = self.get_nested(
+            ret[f'{team}_abbreviation'] = self.get_nested(
                 team_data,
                 'team:abbreviation')
-            ret['%s_power_play' % team] = self.get_nested(
+            ret[f'{team}_power_play'] = self.get_nested(
                 linescore,
-                'teams:%s:powerPlay' % team,
+                f'teams:{team}:powerPlay',
                 callback=lambda x: pp_strength if x and pp_strength != 'Even' else '')
-            ret['%s_empty_net' % team] = self.get_nested(
+            ret[f'{team}_empty_net'] = self.get_nested(
                 linescore,
-                'teams:%s:goaliePulled' % team,
+                f'teams:{team}:goaliePulled',
                 callback=lambda x: self.empty_net if x else '')
 
         if game.get('gameType') == 'P':
@@ -331,20 +351,23 @@ class NHL(ScoresBackend):
             ret['home_losses'] = ret['away_wins']
             ret['away_losses'] = ret['home_wins']
 
-        ret['status'] = self.get_nested(
-            game,
-            'status:abstractGameState',
-            callback=lambda x: x.lower().replace(' ', '_'))
+        if self.get_nested(game, 'status:detailedState').lower() == 'postponed':
+            ret['status'] = 'postponed'
+        else:
+            ret['status'] = self.get_nested(
+                game,
+                'status:abstractGameState',
+                callback=lambda x: x.lower().replace(' ', '_'))
 
-        if ret['status'] == 'live':
-            ret['status'] = 'in_progress'
-        elif ret['status'] == 'final':
-            ret['overtime'] = self.get_nested(
-                linescore,
-                'currentPeriodOrdinal',
-                callback=lambda x: x if 'OT' in x or x == 'SO' else '')
-        elif ret['status'] != 'in_progress':
-            ret['status'] = 'pregame'
+            if ret['status'] == 'live':
+                ret['status'] = 'in_progress'
+            elif ret['status'] == 'final':
+                ret['overtime'] = self.get_nested(
+                    linescore,
+                    'currentPeriodOrdinal',
+                    callback=lambda x: x if 'OT' in x or x == 'SO' else '')
+            elif ret['status'] != 'in_progress':
+                ret['status'] = 'pregame'
 
         # Game time is in UTC, ISO format, thank the FSM
         # Ex. 2016-04-02T17:00:00Z
@@ -357,17 +380,14 @@ class NHL(ScoresBackend):
             # actual datetime so format strings work as expected. The times
             # will all be wrong, but the logging here will help us make the
             # necessary changes to adapt to any API changes.
-            self.logger.error(
-                'Error encountered determining %s game time for game %s:',
-                self.__class__.__name__,
-                game['id'],
-                exc_info=True
+            self.logger.exception(
+                f'Error encountered determining {self.name} game time for '
+                f'game {game["id"]}'
             )
             game_time = datetime.datetime(1970, 1, 1)
 
         ret['start_time'] = pytz.utc.localize(game_time).astimezone()
 
-        self.logger.debug('Returned %s formatter data: %s',
-                          self.__class__.__name__, ret)
+        self.logger.debug(f'Returned {self.name} formatter data: {ret}')
 
         return ret

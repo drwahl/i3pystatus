@@ -29,56 +29,54 @@ class ScoresBackend(SettingsBase):
         # in team_colors.
         if len(self.team_colors) != len(self._default_colors):
             self.logger.debug(
-                'Overriding %s team colors with: %s',
-                self.__class__.__name__,
-                self.team_colors
+                f'Overriding {self.name} team colors '
+                f'with: {self.team_colors}'
             )
             new_colors = copy.copy(self._default_colors)
             new_colors.update(self.team_colors)
             self.team_colors = new_colors
-        self.logger.debug('%s team colors: %s',
-                          self.__class__.__name__, self.team_colors)
+        self.logger.debug(f'{self.name} team colors: {self.team_colors}')
 
     def api_request(self, url):
-        self.logger.debug('Making %s API request to %s',
-                          self.__class__.__name__, url)
+        self.logger.debug(f'Making {self.name} API request to {url}')
         try:
             with urlopen(url) as content:
                 try:
                     if content.url != url:
-                        self.logger.debug('Request to %s was redirected to %s',
-                                          url, content.url)
+                        self.logger.debug(
+                            f'Request to {url} was redirected to {content.url}'
+                        )
                     content_type = dict(content.getheaders())['Content-Type']
-                    mime_type = content_type.split(';')[0].lower()
-                    if 'json' not in mime_type:
-                        self.logger.debug('Response from %s is not JSON',
-                                          content.url)
-                        return {}
                     charset = re.search(r'charset=(.*)', content_type).group(1)
                 except AttributeError:
                     charset = 'utf-8'
                 response_json = content.read().decode(charset).strip()
                 if not response_json:
-                    self.logger.debug('JSON response from %s was blank', url)
+                    self.logger.debug(f'JSON response from {url} was blank')
                     return {}
                 try:
                     response = json.loads(response_json)
                 except json.decoder.JSONDecodeError as exc:
-                    self.logger.error('Error loading JSON: %s', exc)
-                    self.logger.debug('JSON text that failed to load: %s',
-                                      response_json)
+                    self.logger.exception(f'Error encountered while loading JSON')
+                    self.logger.debug(f'Text that failed to load: {response_json}')
                     return {}
-                self.logger.log(5, 'API response: %s', response)
+                self.logger.log(5, f'API response: {response}')
                 return response
         except HTTPError as exc:
             self.logger.critical(
-                'Error %s (%s) making request to %s',
-                exc.code, exc.reason, exc.url,
+                f'Error {exc.code} ({exc.reason}) making request to {exc.url}'
             )
             return {}
         except (ConnectionResetError, URLError) as exc:
-            self.logger.critical('Error making request to %s: %s', url, exc)
+            self.logger.critical(f'Error making request to {url}: {exc}')
             return {}
+
+    @property
+    def name(self):
+        '''
+        Return the backend name
+        '''
+        return self.__class__.__name__
 
     def get_api_date(self):
         '''
@@ -94,7 +92,7 @@ class ScoresBackend(SettingsBase):
             try:
                 api_date = datetime.strptime(self.date, '%Y-%m-%d')
             except (TypeError, ValueError):
-                self.logger.warning('Invalid date \'%s\'', self.date)
+                self.logger.warning(f"Invalid date '{self.date}'")
 
         if api_date is None:
             utc_time = pytz.utc.localize(datetime.utcnow())
@@ -113,17 +111,20 @@ class ScoresBackend(SettingsBase):
         except ValueError:
             return number
         if 4 <= number <= 20:
-            return '%d%s' % (number, 'th')
+            suffix = 'th'
         else:
             ord_map = {1: 'st', 2: 'nd', 3: 'rd'}
-            return '%d%s' % (number, ord_map.get(number % 10, 'th'))
+            suffix = ord_map.get(number % 10, 'th')
+        return f'{number}{suffix}'
 
     @staticmethod
-    def force_int(value):
+    def zero_fallback(value):
         try:
-            return int(value)
+            int(value)
         except (TypeError, ValueError):
-            return 0
+            return '0'
+        else:
+            return str(value)
 
     def get_nested(self, data, expr, callback=None, default=''):
         if callback is None:
@@ -135,8 +136,10 @@ class ScoresBackend(SettingsBase):
                     key = int(key)
                 data = data[key]
         except (KeyError, IndexError, TypeError):
-            self.logger.debug('No %s data found at %s, falling back to %s',
-                              self.__class__.__name__, expr, repr(default))
+            self.logger.debug(
+                f'No {self.name} data found at {expr}, '
+                f'falling back to {repr(default)}'
+            )
             return default
         return callback(data)
 
@@ -218,7 +221,7 @@ class Scores(Module):
     .. code-block:: python
 
         from i3pystatus import Status
-        from i3pystatus.scores import mlb, nhl
+        from i3pystatus.scores import mlb, nhl, nba
 
         status = Status()
 
@@ -227,9 +230,11 @@ class Scores(Module):
             hints={'markup': 'pango'},
             colorize_teams=True,
             favorite_icon='<span size="small" color="#F5FF00">★</span>',
+            team_format='abbreviation',
             backends=[
                 mlb.MLB(
                     teams=['CWS', 'SF'],
+                    team_format='name',
                     format_no_games='No games today :(',
                     inning_top='⬆',
                     inning_bottom='⬇',
@@ -239,7 +244,6 @@ class Scores(Module):
                     teams=['GSW'],
                     all_games=False,
                 ),
-                epl.EPL(),
             ],
         )
 
@@ -361,6 +365,7 @@ class Scores(Module):
                          'shown by the module) when refreshing scores. '
                          '**NOTE:** Depending on how quickly the update is '
                          'performed, the icon may not be displayed.'),
+        ('team_format', 'One of ``name``, ``abbreviation``, or ``city``'),
     )
 
     backends = []
@@ -370,6 +375,7 @@ class Scores(Module):
     colorize_teams = False
     scroll_arrow = '⬍'
     refresh_icon = '⟳'
+    team_format = 'name'
 
     output = {'full_text': ''}
     game_map = {}
@@ -401,10 +407,8 @@ class Scores(Module):
                     # Check to make sure the team abbreviation is valid
                     if team_uc not in backend._valid_teams:
                         raise ValueError(
-                            'Invalid %s team \'%s\'' % (
-                                backend.__class__.__name__,
-                                backend.favorite_teams[index]
-                            )
+                            f'Invalid {backend.name} team '
+                            f"'{backend.favorite_teams[index]}'"
                         )
                     backend.favorite_teams[index] = team_uc
 
@@ -413,12 +417,13 @@ class Scores(Module):
                 # Check to make sure the display order item is valid
                 if order_lc not in backend._valid_display_order:
                     raise ValueError(
-                        'Invalid %s display_order \'%s\'' % (
-                            backend.__class__.__name__,
-                            backend.display_order[index]
-                        )
+                        f'Invalid {backend.name} display_order '
+                        f"'{backend.display_order[index]}'"
                     )
                 backend.display_order[index] = order_lc
+
+            if backend.team_format is None:
+                backend.team_format = self.team_format
 
         self.condition = threading.Condition()
         self.thread = threading.Thread(target=self.update_thread, daemon=True)
@@ -432,12 +437,11 @@ class Scores(Module):
                     self.condition.wait(self.interval)
                 self.check_scores(force='scheduled')
         except Exception:
-            msg = 'Exception in {thread} at {time}, module {name}'.format(
-                thread=threading.current_thread().name,
-                time=time.strftime('%c'),
-                name=self.__class__.__name__,
+            thread = threading.current_thread().name,
+            timestamp = time.strftime('%c')
+            self.logger.exception(
+                f'Exception in {thread} at {timestamp}, module {self.name}'
             )
-            self.logger.error(msg, exc_info=True)
 
     @property
     def current_backend(self):
@@ -465,11 +469,8 @@ class Scores(Module):
         cur_index = self.current_scroll_index
         if cur_index is None:
             self.logger.debug(
-                'Cannot scroll, no tracked {backend} games for '
-                '{date:%Y-%m-%d}'.format(
-                    backend=self.current_backend.__class__.__name__,
-                    date=self.current_backend.date,
-                )
+                f'Cannot scroll, no tracked {self.current_backend.name} games '
+                f'for {self.current_backend.date:%Y-%m-%d}'
             )
         else:
             new_index = (cur_index + step) % len(self.current_backend.scroll_order)
@@ -480,22 +481,17 @@ class Scores(Module):
                 # self.current_scroll_index serves as a shorthand.
                 self.game_map[self.backend_id] = new_index
                 self.logger.debug(
-                    'Scrolled from %s game %d (ID: %s) to %d (ID: %s)',
-                    self.current_backend.__class__.__name__,
-                    cur_index,
-                    cur_id,
-                    new_index,
-                    self.current_backend.scroll_order[new_index],
+                    f'Scrolled from {self.current_backend.name} '
+                    f'game {cur_index} (ID: {cur_id}) to {new_index} '
+                    f'(ID: {self.current_backend.scroll_order[new_index]})'
                 )
                 self.refresh_display()
             else:
                 self.logger.debug(
-                    'Cannot scroll, only one tracked {backend} game '
-                    '(ID: {id_}) for {date:%Y-%m-%d}'.format(
-                        backend=self.current_backend.__class__.__name__,
-                        id_=self.current_game_id,
-                        date=self.current_backend.date,
-                    )
+                    f'Cannot scroll, only one tracked '
+                    f'{self.current_backend.name} game '
+                    f'(ID: {self.current_game_id}) for '
+                    f'{self.current_backend.date:%Y-%m-%d}'
                 )
 
     def cycle_backend(self, step=1):
@@ -509,9 +505,8 @@ class Scores(Module):
         # Set the new backend
         self.backend_id = (self.backend_id + step) % len(self.backends)
         self.logger.debug(
-            'Changed scores backend from %s to %s',
-            self.backends[old].__class__.__name__,
-            self.current_backend.__class__.__name__,
+            f'Changed scores backend from {self.backends[old].name} to '
+            f'{self.current_backend.name}'
         )
         # Display the score for the new backend. This gets rid of lag between
         # when the mouse is clicked and when the new backend is shown, caused
@@ -524,15 +519,14 @@ class Scores(Module):
         if self.current_backend.games:
             self.game_map[self.backend_id] = 0
             self.logger.debug(
-                'Resetting to first game in %s scroll list (ID: %s)',
-                self.current_backend.__class__.__name__,
-                self.current_game_id,
+                f'Resetting to first game in {self.current_backend.name} '
+                f'scroll list (ID: {self.current_game_id})'
             )
             self.refresh_display()
         else:
             self.logger.debug(
-                'No %s games, cannot reset to first game in scroll list',
-                self.current_backend.__class__.__name__,
+                f'No {self.current_backend.name} games, cannot reset to first '
+                'game in scroll list',
             )
 
     def launch_web(self):
@@ -541,7 +535,7 @@ class Scores(Module):
             live_url = self.current_backend.scoreboard_url
         else:
             live_url = game['live_url']
-        self.logger.debug('Launching %s in browser', live_url)
+        self.logger.debug(f'Launching {live_url} in browser')
         user_open(live_url)
 
     @require(internet)
@@ -550,44 +544,52 @@ class Scores(Module):
         if not self.current_backend.last_update:
             update_needed = True
             self.logger.debug(
-                'Performing initial %s score check',
-                self.current_backend.__class__.__name__,
+                f'Performing initial {self.current_backend.name} score check'
             )
         elif force:
             update_needed = True
             self.logger.debug(
-                '%s score check triggered (%s)',
-                self.current_backend.__class__.__name__,
-                force
+                f'{self.current_backend.name} score check triggered ({force})'
             )
         else:
             update_diff = time.time() - self.current_backend.last_update
-            msg = ('Seconds since last %s update (%f) ' %
-                   (self.current_backend.__class__.__name__, update_diff))
+            msg = (
+                f'Seconds since last {self.current_backend.name} update '
+                f'({update_diff}) '
+            )
             if update_diff >= self.interval:
                 update_needed = True
-                msg += ('meets or exceeds update interval (%d), update '
-                        'triggered' % self.interval)
+                msg += (
+                    f'meets or exceeds update interval ({self.interval}), '
+                    'update triggered'
+                )
             else:
-                msg += ('does not exceed update interval (%d), update '
-                        'skipped' % self.interval)
+                msg += (
+                    f'does not exceed update interval ({self.interval}), '
+                    'update skipped'
+                )
             self.logger.debug(msg)
 
         if update_needed:
             self.show_refresh_icon()
             cur_id = self.current_game_id
             cur_games = self.current_backend.games.keys()
+
             self.current_backend.check_scores()
+            for game in self.current_backend.games.values():
+                if game['status'] in ('pregame', 'postponed'):
+                    # Allow formatp to conditionally hide the score when game
+                    # hasn't started (or has been postponed)
+                    game['home_score'] = game['away_score'] = ''
+
             if cur_games == self.current_backend.games.keys():
                 # Set the index to the scroll position of the current game (it
                 # may have changed due to this game or other games changing
                 # status.
                 if cur_id is None:
                     self.logger.debug(
-                        'No tracked {backend} games for {date:%Y-%m-%d}'.format(
-                            backend=self.current_backend.__class__.__name__,
-                            date=self.current_backend.date,
-                        )
+                        f'No tracked {self.current_backend.name} games for '
+                        f'{self.current_backend.date:%Y-%m-%d}'
                     )
                 else:
                     cur_pos = self.game_map[self.backend_id]
@@ -595,20 +597,15 @@ class Scores(Module):
                     if cur_pos != new_pos:
                         self.game_map[self.backend_id] = new_pos
                         self.logger.debug(
-                            'Scroll position for current %s game (%s) updated '
-                            'from %d to %d',
-                            self.current_backend.__class__.__name__,
-                            cur_id,
-                            cur_pos,
-                            new_pos,
+                            f'Scroll position for current '
+                            f'{self.current_backend.name} game '
+                            f'({cur_id}) updated from {cur_pos} to {new_pos}'
                         )
                     else:
                         self.logger.debug(
-                            'Scroll position (%d) for current %s game (ID: %s) '
-                            'unchanged',
-                            cur_pos,
-                            self.current_backend.__class__.__name__,
-                            cur_id,
+                            f'Scroll position ({cur_pos}) for current '
+                            f'{self.current_backend.name} game (ID: {cur_id}) '
+                            'unchanged'
                         )
             else:
                 # Reset the index to 0 if there are any tracked games,
@@ -617,18 +614,15 @@ class Scores(Module):
                 if self.current_backend.games:
                     self.game_map[self.backend_id] = 0
                     self.logger.debug(
-                        'Tracked %s games updated, setting scroll position to '
-                        '0 (ID: %s)',
-                        self.current_backend.__class__.__name__,
-                        self.current_game_id
+                        f'Tracked {self.current_backend.name} games updated, '
+                        f'setting scroll position to 0 '
+                        f'(ID: {self.current_game_id})'
                     )
                 else:
                     self.game_map[self.backend_id] = None
                     self.logger.debug(
-                        'No tracked {backend} games for {date:%Y-%m-%d}'.format(
-                            backend=self.current_backend.__class__.__name__,
-                            date=self.current_backend.date,
-                        )
+                        f'No tracked {self.current_backend.name} games for '
+                        f'{self.current_backend.date:%Y-%m-%d}'
                     )
             self.current_backend.last_update = time.time()
         self.refresh_display()
@@ -644,35 +638,55 @@ class Scores(Module):
         else:
             game = copy.copy(self.current_game)
 
-            fstr = str(getattr(
-                self.current_backend,
-                'format_%s' % game['status']
-            ))
+            # Set the game_status using the formatter
+            game_status_opt = f'status_{game["status"]}'
+            try:
+                game['game_status'] = formatp(
+                    str(getattr(self.current_backend, game_status_opt)),
+                    **game
+                )
+            except AttributeError:
+                self.logger.error(
+                    f'Unable to find {self.current_backend.name} option '
+                    f'{game_status_opt}'
+                )
+                game['game_status'] = 'Unknown Status'
 
             for team in ('home', 'away'):
-                abbrev_key = '%s_abbrev' % team
+                team_abbrev = game[f'{team}_abbreviation']
                 # Set favorite icon, if applicable
-                game['%s_favorite' % team] = self.favorite_icon \
-                    if game[abbrev_key] in self.current_backend.favorite_teams \
+                game[f'{team}_favorite'] = self.favorite_icon \
+                    if team_abbrev in self.current_backend.favorite_teams \
                     else ''
 
-                if self.colorize_teams:
-                    # Wrap in Pango markup
-                    color = self.current_backend.team_colors.get(
-                        game.get(abbrev_key)
+                try:
+                    game[f'{team}_team'] = game[f'{team}_{self.current_backend.team_format}']
+                except KeyError:
+                    self.logger.debug(
+                        f'Unable to find {self.current_backend.team_format} '
+                        f'value, falling back to {team_abbrev}'
                     )
-                    if color is not None:
-                        for item in ('abbrev', 'city', 'name', 'name_short'):
-                            key = '%s_%s' % (team, item)
-                            if key in game:
-                                val = '<span color="%s">%s</span>' % (color, game[key])
-                                game[key] = val
+                    game[f'{team}_team'] = team_abbrev
+
+                if self.colorize_teams:
+                    try:
+                        color = self.current_backend.team_colors[team_abbrev]
+                    except KeyError:
+                        pass
+                    else:
+                        for val in ('team', 'name', 'city', 'abbreviation'):
+                            # Wrap in Pango markup
+                            game[f'{team}_{val}'] = ''.join((
+                                f'<span color="{color}">',
+                                game[f'{team}_{val}'],
+                                '</span>',
+                            ))
 
             game['scroll'] = self.scroll_arrow \
                 if len(self.current_backend.games) > 1 \
                 else ''
 
-            output = formatp(fstr, **game).strip()
+            output = formatp(self.current_backend.format, **game).strip()
 
         self.output = {'full_text': output, 'color': self.color}
 
