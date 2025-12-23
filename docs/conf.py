@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.abspath('.'))
 sys.path.insert(0, os.path.abspath('..'))
 
 # requires PyPI mock
-import mock
+import unittest.mock as mock
 
 MOCK_MODULES = [
     "alsaaudio",
@@ -68,7 +68,9 @@ MOCK_MODULES = [
     "requests.adapters",
     "exchangelib",
     "soco",
-    "tesla_api"
+    "teslapy",
+    "yfinance",
+    "docker",
 ]
 
 for mod_name in MOCK_MODULES:
@@ -101,7 +103,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'i3pystatus'
-copyright = '2012-2017 i3pystatus developers. Free and open software under the MIT license'
+copyright = '2012-2022 i3pystatus authors. Free and open software under the MIT license'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -366,4 +368,4 @@ epub_copyright = '2013, Author'
 #epub_use_index = True
 
 def setup(app):
-    app.add_stylesheet('i3pystatus.css')
+    app.add_css_file('i3pystatus.css')
